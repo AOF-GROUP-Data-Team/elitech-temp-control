@@ -35,7 +35,7 @@ TZ = pytz.timezone("Asia/Riyadh")
 SENDER_EMAIL  = "aof.group.auto@gmail.com"
 SENDER_NAME   = "Business Intelligence"
 RECIPIENTS_TO = ["o.salahaddin@aofgroup.com"]
-RECIPIENTS_CC = ["m.hejazi@aofgroup.com", "a.alsalem@aofgroup.com"]
+RECIPIENTS_CC = ["a.alsalem@aofgroup.com"]
 TEST_RECIPIENTS = ["a.alsalem@aofgroup.com"]
 
 POLL_MIN          = 5     # how often elitech_live.py is triggered
