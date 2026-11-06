@@ -1,0 +1,41 @@
+name: Cold Chain Live
+
+# Triggered by the github alarm Apps Script (every 5 minutes).
+on:
+  workflow_dispatch:
+    inputs:
+      send_email:
+        description: "Send emails"
+        type: choice
+        options: ["true", "false"]
+        default: "true"
+
+# Live and summary share the same sheet state, so never run them at the same time.
+concurrency:
+  group: cold-chain
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Run elitech_live.py
+        env:
+          ELITECH_KEY_ID: ${{ secrets.ELITECH_KEY_ID }}
+          ELITECH_KEY_SECRET: ${{ secrets.ELITECH_KEY_SECRET }}
+          ELITECH_USERNAME: ${{ secrets.ELITECH_USERNAME }}
+          ELITECH_PASSWORD: ${{ secrets.ELITECH_PASSWORD }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SEND_EMAIL: ${{ github.event.inputs.send_email || 'true' }}
+        run: python elitech_live.py
