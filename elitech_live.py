@@ -21,9 +21,10 @@ def run_live(snap, sh, state):
                                      "silent": baseline and info["kind"] != "Temperature", "peak": info.get("value")}
             rec["ok_count"] = 0
             rec["detail"], rec["value"] = info["detail"], info.get("value")
-            if info.get("value") is not None and rec.get("peak") is not None:
-                lo, hi = TEMP_RANGES.get(info.get("type", ""), (None, None))
-                rec["peak"] = max(rec["peak"], info["value"]) if hi is not None and info["value"] > hi else min(rec["peak"], info["value"])
+            rec["last_bad"] = NOW_S
+            if info.get("value") is not None:
+                prev = rec.get("peak")
+                rec["peak"] = info["value"] if prev is None else worst_reading([prev, info["value"]], info.get("type", ""))
             if rec["silent"]:
                 return
             age = (NOW - parse_ts(rec["since"])).total_seconds() / 60
@@ -41,7 +42,7 @@ def run_live(snap, sh, state):
                 return
             rec["ok_count"] = rec.get("ok_count", 0) + 1
             if rec["ok_count"] >= RESOLVE_READINGS:  # back in range several readings in a row
-                events.append(("RESOLVED", {**rec, "detail": info.get("ok_detail", rec["detail"])}))
+                events.append(("RESOLVED", {**rec, "detail": info.get("ok_detail", rec["detail"]), "now": info.get("value")}))
                 issues.pop(key, None)
 
     log_rows = []
@@ -101,28 +102,56 @@ def run_live(snap, sh, state):
         print("Nothing new - no instant email.")
 
 
+RESOLVED_AR = {"Temperature": "كانت درجة الحرارة خارج النطاق", "Offline": "كان الجهاز غير متصل",
+               "No reading": "كانت بدون قراءة حرارة"}
+
 def send_instant_email(events, issues):
-    def rows_for(kind_events, mark):
+    def c(v):
+        return "-" if v is None else f"{v:g} C"
+
+    def open_rows(kind_events):
         out = []
         for e, r in kind_events:
             mins = (NOW - parse_ts(r["since"])).total_seconds() / 60
-            out.append([("!" if mark else "") + r["branch"], r.get("channel") or "-", TYPE_AR.get(r.get("type", ""), "-"),
-                        KIND_AR[r["kind"]], r["detail"], r["since"][:16], fmt_minutes(mins)])
+            temp = r["kind"] == "Temperature"
+            out.append(["!" + r["branch"], r.get("channel") or "-", TYPE_AR.get(r.get("type", ""), "-"),
+                        KIND_AR[r["kind"]],
+                        c(r.get("value")) if temp else r["detail"],
+                        c(r.get("peak")) if temp else "-",
+                        range_text(r.get("type", "")) if temp else "-",
+                        r["since"][11:16], fmt_minutes(mins)])
+        return out
+
+    def resolved_rows(kind_events):
+        out = []
+        for e, r in kind_events:
+            start = parse_ts(r["since"])
+            last_bad = parse_ts(r.get("last_bad") or "") or NOW
+            mins = (last_bad - start).total_seconds() / 60 + POLL_MIN
+            temp = r["kind"] == "Temperature"
+            out.append([r["branch"], r.get("channel") or "-", TYPE_AR.get(r.get("type", ""), "-"),
+                        RESOLVED_AR[r["kind"]],
+                        c(r.get("peak")) if temp else "-",
+                        c(r.get("now")) if temp else "عاد",
+                        range_text(r.get("type", "")) if temp else "-",
+                        r["since"][11:16], last_bad.strftime("%H:%M"), fmt_minutes(mins)])
         return out
 
     new = [x for x in events if x[0] == "NEW"]
     rem = [x for x in events if x[0] == "REMINDER"]
     res = [x for x in events if x[0] == "RESOLVED"]
     open_n = sum(1 for r in issues.values() if r["alerted"] and not r["silent"])
-    hdr = ["الفرع / الجهاز", "الحساس", "النوع", "المشكلة", "التفاصيل", "منذ", "المدة"]
+    hdr_open = ["الفرع / الجهاز", "الحساس", "النوع", "المشكلة", "القراءة الحالية", "أسوأ قراءة", "المطلوب", "بدأت", "المدة"]
+    hdr_res  = ["الفرع / الجهاز", "الحساس", "النوع", "المشكلة", "أسوأ قراءة", "القراءة الآن", "المطلوب",
+                "بدأت", "آخر قراءة سيئة", "مدة المشكلة"]
 
     inner = ""
     if new:
-        inner += f"<h3 style='color:#C62828;margin:6px 0;'>تنبيهات جديدة ({len(new)})</h3>" + table(hdr, rows_for(new, True))
+        inner += f"<h3 style='color:#C62828;margin:6px 0;'>تنبيهات جديدة ({len(new)})</h3>" + table(hdr_open, open_rows(new))
     if rem:
-        inner += f"<h3 style='color:#EF6C00;margin:6px 0;'>ما زالت قائمة منذ أكثر من {REMIND_HOURS} ساعات ({len(rem)})</h3>" + table(hdr, rows_for(rem, True))
+        inner += f"<h3 style='color:#EF6C00;margin:6px 0;'>ما زالت قائمة منذ أكثر من {REMIND_HOURS} ساعات ({len(rem)})</h3>" + table(hdr_open, open_rows(rem))
     if res:
-        inner += f"<h3 style='color:#2E7D32;margin:6px 0;'>تم الحل ({len(res)})</h3>" + table(hdr, rows_for(res, False))
+        inner += f"<h3 style='color:#2E7D32;margin:6px 0;'>تم الحل ({len(res)})</h3>" + table(hdr_res, resolved_rows(res))
 
     parts = []
     if new: parts.append(f"{len(new)} جديد")
