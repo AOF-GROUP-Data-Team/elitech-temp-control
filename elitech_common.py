@@ -34,12 +34,25 @@ TZ = pytz.timezone("Asia/Riyadh")
 
 SENDER_EMAIL  = "aof.group.auto@gmail.com"
 SENDER_NAME   = "Business Intelligence"
-RECIPIENTS_TO = ["o.salahaddin@aofgroup.com"]
-RECIPIENTS_CC = ["a.alsalem@aofgroup.com"]
+RECIPIENTS_TO = [
+    "a.omara@aofgroup.com",
+    "m.alhuaydar@aofgroup.com",
+    "h.modwi@aofgroup.com",
+    "cctvdep@aofgroup.com",
+]
+RECIPIENTS_CC = [
+    "m.abouelmaaty@albawasiq.com",   # Maher
+    "a.alsalem@aofgroup.com",
+    "s.alharbi@aofgroup.com",
+    "a.abduldim@aofgroup.com",
+    "o.salahaddin@aofgroup.com",
+    "omar@aofgroup.com",
+    "faisal@aofgroup.com",
+]
 TEST_RECIPIENTS = ["a.alsalem@aofgroup.com"]
 
 POLL_MIN          = 5     # how often elitech_live.py is triggered
-CONFIRM_MIN       = int(env("CONFIRM_MIN", "5"))   # breach must last this long (= 2 readings in a row) before alerting
+CONFIRM_MIN       = int(env("CONFIRM_MIN", "15"))  # out of range this long (4 readings in a row) before the first alert
 REMIND_HOURS      = 4     # re-alert if still broken after this long
 RESOLVE_MARGIN    = 0.5   # must be this far inside the range to count as back to normal
 RESOLVE_READINGS  = 3     # "resolved" only after this many good readings in a row (15 min)
@@ -47,11 +60,10 @@ OFFLINE_AFTER_MIN = 60    # no upload for this long = offline
 INACTIVE_DAYS     = 7     # devices silent longer than this are not tracked (listed in summary only)
 KEEP_DAYS         = 7     # readings older than this are removed from the sheet
 
-# Ranges by type. Zenput template 943193 uses chillers 0..5 and freezers -18..-16.
-# Freezer lower bound is None here so a colder freezer is not an alarm; set -18 to alert on it too.
+# Ranges by type. Chiller 0..5. Freezer: alert when warmer than -15 (colder is never an alarm).
 TEMP_RANGES = {
     "chiller": (0.0, 5.0),
-    "freezer": (None, -16.0),
+    "freezer": (None, -15.0),
 }
 
 # Device -> type. A channel whose name contains "Freezer"/"Chiller" (HAJED, MAJED) is typed automatically.
