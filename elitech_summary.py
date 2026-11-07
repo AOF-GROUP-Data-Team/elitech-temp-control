@@ -338,6 +338,7 @@ def prune_readings(ws, values):
 
 
 if __name__ == "__main__":
+    use_recipients("summary")
     sh, ws_state, state = open_store()
     snap = snapshot(fetch_devices(get_token()))
     run_summary(snap, sh, state)
