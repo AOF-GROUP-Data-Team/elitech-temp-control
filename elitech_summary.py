@@ -67,6 +67,8 @@ def run_summary(snap, sh, state):
     av = ws_alert.get_all_values()
     al_df = pd.DataFrame(av[1:], columns=av[0]) if len(av) > 1 else pd.DataFrame(columns=ALERT_HEADER)
     al_df = al_df[al_df["Time (KSA)"].str.startswith(day_s)]
+    dev_al = al_df[al_df["Kind"] != "Temperature"]
+    al_df = al_df[al_df["Kind"] == "Temperature"]
 
     inactive = [s for s in snap if s["status"] == "Inactive" and not s["ignore"]]
     untyped = sorted({f"{r['Device']} / {r['Channel']}" for _, r in ch_df.iterrows() if not r["Type"]}) if not ch_df.empty else []
@@ -78,7 +80,7 @@ def run_summary(snap, sh, state):
 
     # ---------- Excel ----------
     out_path = f"Cold_Chain_Summary_{day_s}.xlsx"
-    build_summary_excel(out_path, day_s, ch_df, off_df, al_df, temps, inactive)
+    build_summary_excel(out_path, day_s, ch_df, pd.DataFrame(), al_df, temps, [])
     pdf_path = f"Cold_Chain_Charts_{day_s}.pdf"
     build_charts_pdf(pdf_path, day, temps, ch_df)
 
@@ -94,26 +96,19 @@ def run_summary(snap, sh, state):
             + kpi("خرجت عن النطاق", len(breach), "#C62828")
             + kpi("ساعات خارج النطاق (إجمالي)", total_out_h, "#C62828")
             + kpi("تنبيهات فورية أرسلت", new_alerts, "#EF6C00")
-            + kpi("أجهزة انقطعت", len(off_df), "#777")
             + "</tr></table>")
 
     b_rows = [["!" + r["Branch"], r["Channel"], TYPE_AR.get(r["Type"], "-"), r["Range"], r["Min"], r["Max"], r["Avg"],
                fmt_minutes(r["Out of range (min)"]), f"{r['Out of range %']}%"] for _, r in breach.iterrows()]
-    o_rows = [[r["Branch"], fmt_minutes(r["Offline (min)"]), fmt_minutes(r["No reading (min)"])]
-              for _, r in (off_df.sort_values("Offline (min)", ascending=False).iterrows() if not off_df.empty else [])]
     ok_rows = [[r["Branch"], r["Channel"], TYPE_AR.get(r["Type"], "-"), r["Min"], r["Max"], r["Avg"]]
                for _, r in (ch_df[ch_df["Out of range (min)"] == 0].iterrows() if not ch_df.empty else [])]
 
     inner = kpis
     inner += "<h3 style='color:#C62828;margin:6px 0;'>خرجت عن النطاق خلال اليوم</h3>"
     inner += table(["الفرع / الجهاز", "الحساس", "النوع", "النطاق", "أدنى", "أعلى", "المتوسط", "المدة خارج النطاق", "نسبة اليوم"], b_rows)
-    inner += "<h3 style='color:#EF6C00;margin:6px 0;'>انقطاع الاتصال أو القراءة</h3>"
-    inner += table(["الفرع / الجهاز", "مدة الانقطاع", "مدة بدون قراءة"], o_rows)
     inner += "<h3 style='color:#2E7D32;margin:6px 0;'>ضمن النطاق طوال اليوم</h3>"
     inner += table(["الفرع / الجهاز", "الحساس", "النوع", "أدنى", "أعلى", "المتوسط"], ok_rows)
-    if inactive:
-        inner += (f"<p style='color:#555;font-size:12px;'>أجهزة متوقفة منذ أكثر من {INACTIVE_DAYS} أيام ولا تتم مراقبتها: "
-                  + html.escape(", ".join(s["device"] for s in inactive)) + "</p>")
+    inner += "<p style='color:#555;font-size:12px;'>الأجهزة غير المتصلة أو بدون قراءة في تقرير منفصل.</p>"
     if untyped:
         inner += ("<p style='color:#555;font-size:12px;'>حساسات بدون نوع محدد (لا يتم فحص النطاق): "
                   + html.escape(", ".join(untyped)) + "</p>")
@@ -124,8 +119,62 @@ def run_summary(snap, sh, state):
     send_email(subject, wrap("ملخص اليوم - أجهزة مراقبة الحرارة Elitech",
                              f"اليوم: <span dir='ltr'>{day_s}</span> | من 00:00 إلى 23:59 KSA", inner), [out_path, pdf_path])
 
+    send_device_report(day_s, devstat, dev_al, snap)
+
     prune_readings(ws_read, values)
     return True
+
+
+def send_device_report(day_s, devstat, dev_al, snap):
+    """Separate daily email: devices that went offline or stopped reading, plus current state."""
+    rows = []
+    for dev, g in devstat.groupby("Device"):
+        off = g.loc[g["Status"] == "Offline", "dur"].sum()
+        nr = g.loc[g["Status"] == "No reading", "dur"].sum()
+        if off or nr:
+            times = int(((dev_al["Device"] == dev) & (dev_al["Event"] == "NEW")).sum()) if not dev_al.empty else 0
+            rows.append({"branch": g["Branch"].iloc[0], "off": off, "nr": nr, "times": times})
+    rows.sort(key=lambda r: -(r["off"] + r["nr"]))
+
+    now_bad = sorted([s for s in snap if s["status"] in ("Offline", "No reading") and not s["ignore"]],
+                     key=lambda s: s["minutes"] or 0)
+    inactive = sorted([s for s in snap if s["status"] == "Inactive" and not s["ignore"]],
+                      key=lambda s: s["minutes"] or 10**9)
+    tracked = sum(1 for s in snap if s["status"] != "Inactive" and not s["ignore"])
+
+    def kpi(label, val, color):
+        return (f"<td style='padding:10px 14px;border:1px solid #ddd;text-align:center;'>"
+                f"<div style='font-size:22px;font-weight:bold;color:{color};'>{val}</div>"
+                f"<div style='font-size:12px;color:#555;'>{label}</div></td>")
+
+    def last_seen(s):
+        return s["last"].strftime("%Y-%m-%d %H:%M") if s["last"] else "-"
+
+    def battery(s):
+        return f"{s['battery']}%" if s.get("battery") is not None else "-"
+
+    inner = ("<table style='border-collapse:collapse;margin-bottom:16px;'><tr>"
+             + kpi("أجهزة تتم مراقبتها", tracked, "#222")
+             + kpi("انقطعت أو توقفت قراءتها خلال اليوم", len(rows), "#EF6C00")
+             + kpi("غير متصلة / بدون قراءة الآن", len(now_bad), "#C62828")
+             + kpi(f"متوقفة أكثر من {INACTIVE_DAYS} أيام", len(inactive), "#777")
+             + "</tr></table>")
+    inner += "<h3 style='color:#EF6C00;margin:6px 0;'>خلال اليوم</h3>"
+    inner += table(["الفرع / الجهاز", "مدة الانقطاع", "مدة بدون قراءة", "عدد المرات"],
+                   [["!" + r["branch"], fmt_minutes(r["off"]), fmt_minutes(r["nr"]), r["times"]] for r in rows])
+    inner += "<h3 style='color:#C62828;margin:6px 0;'>الحالة الآن</h3>"
+    inner += table(["الفرع / الجهاز", "الحالة", "آخر اتصال", "البطارية", "التفاصيل"],
+                   [["!" + s["branch"], "غير متصل" if s["status"] == "Offline" else "بدون قراءة",
+                     last_seen(s), battery(s),
+                     ("FAULT: " + ", ".join(s["faults"])) if s["status"] == "No reading" and s["faults"] else "-"]
+                    for s in now_bad])
+    inner += f"<h3 style='color:#777;margin:6px 0;'>متوقفة منذ أكثر من {INACTIVE_DAYS} أيام (لا تتم مراقبتها)</h3>"
+    inner += table(["الجهاز", "آخر اتصال", "البطارية"], [[s["branch"], last_seen(s), battery(s)] for s in inactive])
+
+    word = f"{len(now_bad)} غير متصل الآن" if now_bad else "كل الأجهزة متصلة"
+    send_email(f"تقرير حالة أجهزة المراقبة ليوم {day_s} | {word}",
+               wrap("تقرير حالة الأجهزة - انقطاع الاتصال أو القراءة Elitech",
+                    f"اليوم: <span dir='ltr'>{day_s}</span> | من 00:00 إلى 23:59 KSA", inner))
 
 
 def build_charts_pdf(path, day, temps, ch_df):
@@ -261,16 +310,16 @@ def build_summary_excel(path, day_s, ch_df, off_df, al_df, temps, inactive):
                            "Green = all readings in range (hourly average shown).").font = Font(italic=True, color="666666")
         ws_h.freeze_panes = "D2"
 
-    ws_o = wb.create_sheet("Offline")
     if not off_df.empty:
+        ws_o = wb.create_sheet("Offline")
         write(ws_o, off_df, None, {"Branch": 22, "Device": 18})
 
     ws_a = wb.create_sheet("Alerts")
     if not al_df.empty:
         write(ws_a, al_df.reset_index(drop=True), lambda r: r["Event"] == "NEW", {"Detail": 40, "Branch": 22})
 
-    ws_i = wb.create_sheet("Inactive devices")
     if inactive:
+        ws_i = wb.create_sheet("Inactive devices")
         write(ws_i, pd.DataFrame([{"Device": s["device"],
                                    "Last seen (KSA)": s["last"].strftime("%Y-%m-%d %H:%M") if s["last"] else "",
                                    "Battery %": s["battery"]} for s in inactive]), None, {"Device": 30})
