@@ -50,7 +50,8 @@ def run_live(snap, sh, state):
         if d["ignore"] or d["status"] == "Inactive":
             continue
         dev, br = d["device"], d["branch"]
-        base = {"device": dev, "branch": br, "channel": ""}
+        base = {"device": dev, "branch": br, "channel": "",
+                "battery": f"{d['battery']}%" if d.get("battery") is not None else "-"}
 
         track(f"{dev}|offline", d["status"] == "Offline",
               {**base, "kind": "Offline", "detail": f"آخر اتصال {d['last']:%Y-%m-%d %H:%M}" if d["last"] else "",
@@ -97,7 +98,12 @@ def run_live(snap, sh, state):
           f"events this run: {len(events)}" + (" (baseline run, existing offline/no-reading not alerted)" if baseline else ""))
 
     if events:
-        send_instant_email(events, issues)
+        temp_events = [e for e in events if e[1]["kind"] == "Temperature"]
+        dev_events  = [e for e in events if e[1]["kind"] != "Temperature"]
+        if temp_events:
+            send_instant_email(temp_events, issues, "temp")
+        if dev_events:
+            send_instant_email(dev_events, issues, "device")
     else:
         print("Nothing new - no instant email.")
 
@@ -105,7 +111,7 @@ def run_live(snap, sh, state):
 RESOLVED_AR = {"Temperature": "كانت درجة الحرارة خارج النطاق", "Offline": "كان الجهاز غير متصل",
                "No reading": "كانت بدون قراءة حرارة"}
 
-def send_instant_email(events, issues):
+def send_instant_email(events, issues, report):
     def c(v):
         return "-" if v is None else f"{v:g} C"
 
@@ -140,10 +146,29 @@ def send_instant_email(events, issues):
     new = [x for x in events if x[0] == "NEW"]
     rem = [x for x in events if x[0] == "REMINDER"]
     res = [x for x in events if x[0] == "RESOLVED"]
-    open_n = sum(1 for r in issues.values() if r["alerted"] and not r["silent"])
+    is_temp = report == "temp"
+    open_n = sum(1 for r in issues.values() if r["alerted"] and not r["silent"]
+                 and (r["kind"] == "Temperature") == is_temp)
+    if not is_temp:
+        hdr_open = ["الفرع / الجهاز", "المشكلة", "التفاصيل", "البطارية", "بدأت", "المدة"]
+        hdr_res  = ["الفرع / الجهاز", "المشكلة", "بدأت", "آخر مرة", "مدة المشكلة"]
     hdr_open = ["الفرع / الجهاز", "الحساس", "النوع", "المشكلة", "القراءة الحالية", "أسوأ قراءة", "المطلوب", "بدأت", "المدة"]
     hdr_res  = ["الفرع / الجهاز", "الحساس", "النوع", "المشكلة", "أسوأ قراءة", "القراءة الآن", "المطلوب",
                 "بدأت", "آخر قراءة سيئة", "مدة المشكلة"]
+
+    if not is_temp:
+        def open_rows(kind_events):
+            return [["!" + r["branch"], KIND_AR[r["kind"]], r["detail"], r.get("battery", "-"),
+                     r["since"][11:16], fmt_minutes((NOW - parse_ts(r["since"])).total_seconds() / 60)]
+                    for e, r in kind_events]
+
+        def resolved_rows(kind_events):
+            out = []
+            for e, r in kind_events:
+                last_bad = parse_ts(r.get("last_bad") or "") or NOW
+                out.append([r["branch"], RESOLVED_AR[r["kind"]], r["since"][11:16], last_bad.strftime("%H:%M"),
+                            fmt_minutes((last_bad - parse_ts(r["since"])).total_seconds() / 60 + POLL_MIN)])
+            return out
 
     inner = ""
     if new:
@@ -157,9 +182,13 @@ def send_instant_email(events, issues):
     if new: parts.append(f"{len(new)} جديد")
     if rem: parts.append(f"{len(rem)} مستمر")
     if res: parts.append(f"{len(res)} تم الحل")
-    subject = f"تنبيه فوري - درجات حرارة الثلاجات | {' - '.join(parts)} | {NOW:%H:%M}"
     sub = f"<span dir='ltr'>{NOW:%Y-%m-%d %H:%M}</span> KSA | التنبيهات المفتوحة حاليا: {open_n}"
-    send_email(subject, wrap("تنبيه فوري - أجهزة مراقبة الحرارة Elitech", sub, inner))
+    if is_temp:
+        subject = f"تنبيه فوري - درجات حرارة الثلاجات | {' - '.join(parts)} | {NOW:%H:%M}"
+        send_email(subject, wrap("تنبيه فوري - درجات الحرارة Elitech", sub, inner))
+    else:
+        subject = f"تنبيه أجهزة المراقبة - انقطاع أو بدون قراءة | {' - '.join(parts)} | {NOW:%H:%M}"
+        send_email(subject, wrap("تنبيه أجهزة المراقبة - انقطاع الاتصال أو القراءة Elitech", sub, inner))
 
 
 
