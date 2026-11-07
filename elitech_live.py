@@ -102,8 +102,10 @@ def run_live(snap, sh, state):
         dev_events  = [e for e in events if e[1]["kind"] != "Temperature"]
         if temp_events:
             send_instant_email(temp_events, issues, "temp")
+        # Offline / no-reading events are only logged (Elitech Alerts tab) for the
+        # daily device report - no instant email for them.
         if dev_events:
-            send_instant_email(dev_events, issues, "device")
+            print(f"{len(dev_events)} offline/no-reading event(s) logged, no instant email (daily report only).")
     else:
         print("Nothing new - no instant email.")
 
@@ -193,6 +195,7 @@ def send_instant_email(events, issues, report):
 
 
 if __name__ == "__main__":
+    use_recipients("alert")
     sh, ws_state, state = open_store()
     snap = snapshot(fetch_devices(get_token()))
     run_live(snap, sh, state)
