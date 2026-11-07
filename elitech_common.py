@@ -34,21 +34,39 @@ TZ = pytz.timezone("Asia/Riyadh")
 
 SENDER_EMAIL  = "aof.group.auto@gmail.com"
 SENDER_NAME   = "Business Intelligence"
-RECIPIENTS_TO = [
+# ---- Instant alerts (temperature only), sent by elitech_live.py ----
+ALERT_TO = [
+    "cctvdep@aofgroup.com",
+]
+ALERT_CC = [
+    "a.alsalem@aofgroup.com",
+    "o.salahaddin@aofgroup.com",
+  
+]
+
+# ---- Morning reports for yesterday (temperature summary + offline / no-reading report), sent by elitech_summary.py ----
+SUMMARY_TO = [
     "a.omara@aofgroup.com",
-    "m.alhuaydar@aofgroup.com",
+    "m.houider@aofgroup.com",
     "h.modwi@aofgroup.com",
     "cctvdep@aofgroup.com",
 ]
-RECIPIENTS_CC = [
+SUMMARY_CC = [
     "m.abouelmaaty@albawasiq.com",   # Maher
     "a.alsalem@aofgroup.com",
-    "s.alharbi@aofgroup.com",
-    "a.abduldim@aofgroup.com",
     "o.salahaddin@aofgroup.com",
     "omar@aofgroup.com",
     "faisal@aofgroup.com",
 ]
+
+# Which list send_email() uses; each script sets this at start.
+RECIPIENTS_TO, RECIPIENTS_CC = ALERT_TO, ALERT_CC
+
+def use_recipients(kind):
+    """kind = 'alert' or 'summary'."""
+    global RECIPIENTS_TO, RECIPIENTS_CC
+    RECIPIENTS_TO, RECIPIENTS_CC = (SUMMARY_TO, SUMMARY_CC) if kind == "summary" else (ALERT_TO, ALERT_CC)
+
 TEST_RECIPIENTS = ["a.alsalem@aofgroup.com"]
 
 POLL_MIN          = 5     # how often elitech_live.py is triggered
@@ -322,7 +340,7 @@ def send_email(subject, body, attachment=None):
     msg["Subject"] = subject
     msg["From"] = f"{SENDER_NAME} <{SENDER_EMAIL}>"
     msg["To"] = ", ".join(TEST_RECIPIENTS if TEST_MODE else RECIPIENTS_TO)
-    if not TEST_MODE:
+    if not TEST_MODE and RECIPIENTS_CC:
         msg["Cc"] = ", ".join(RECIPIENTS_CC)
     msg.set_content("This report needs an HTML-capable email client.")
     msg.add_alternative(body, subtype="html")
