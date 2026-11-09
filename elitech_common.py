@@ -3,7 +3,7 @@
 # elitech_live.py (every 5 min) and elitech_summary.py (daily)
 # ============================================================
 
-import os, sys, json, time, smtplib, html
+import os, sys, re, json, time, smtplib, html
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 
@@ -36,12 +36,17 @@ SENDER_EMAIL  = "aof.group.auto@gmail.com"
 SENDER_NAME   = "Business Intelligence"
 # ---- Instant alerts (temperature only), sent by elitech_live.py ----
 ALERT_TO = [
+    "a.omara@aofgroup.com",
+    "m.alhuaydar@aofgroup.com",
+    "h.modwi@aofgroup.com",
     "cctvdep@aofgroup.com",
 ]
 ALERT_CC = [
+    "m.abouelmaaty@albawasiq.com",   # Maher
     "a.alsalem@aofgroup.com",
     "o.salahaddin@aofgroup.com",
-  
+    "omar@aofgroup.com",
+    "faisal@aofgroup.com",
 ]
 
 # ---- Morning reports for yesterday (temperature summary + offline / no-reading report), sent by elitech_summary.py ----
@@ -153,6 +158,23 @@ def worst_reading(values, typ):
     def dist(v):
         return max((v - hi) if hi is not None else 0, (lo - v) if lo is not None else 0)
     return max(values, key=dist)
+
+def branch_sort_key(branch, device="", channel=""):
+    """Order: Classic B01..Bnn, then Garatis QB.., then Lubda LB.., then everything else A-Z.
+    Devices/probes of the same branch stay together."""
+    b = str(branch or "")
+    low = b.lower()
+    m = re.search(r"(\d+)\s*$", b) or re.search(r"[A-Za-z]*\s*B\s*0*(\d+)", b)
+    num = int(m.group(1)) if m else 9999
+    if "garat" in low or re.search(r"\bQB\s*\d", b):
+        group = 1
+    elif "lubda" in low or re.search(r"\bLB\s*\d", b):
+        group = 2
+    elif re.search(r"\bB\s*\d+\s*$", b):
+        group = 0
+    else:
+        group, num = 3, 0
+    return (group, num, low, str(device or "").lower(), str(channel or "").lower())
 
 def range_text(typ):
     lo, hi = TEMP_RANGES.get(typ, (None, None))
