@@ -52,7 +52,8 @@ def run_summary(snap, sh, state):
         })
     ch_df = pd.DataFrame(ch_rows)
     if not ch_df.empty:
-        ch_df = ch_df.sort_values(["Out of range (min)", "Branch"], ascending=[False, True]).reset_index(drop=True)
+        ch_df["_k"] = [branch_sort_key(r["Branch"], r["Device"], r["Channel"]) for _, r in ch_df.iterrows()]
+        ch_df = ch_df.sort_values("_k").drop(columns="_k").reset_index(drop=True)
 
     off_rows = []
     for dev, g in devstat.groupby("Device"):
@@ -133,13 +134,13 @@ def send_device_report(day_s, devstat, dev_al, snap):
         nr = g.loc[g["Status"] == "No reading", "dur"].sum()
         if off or nr:
             times = int(((dev_al["Device"] == dev) & (dev_al["Event"] == "NEW")).sum()) if not dev_al.empty else 0
-            rows.append({"branch": g["Branch"].iloc[0], "off": off, "nr": nr, "times": times})
-    rows.sort(key=lambda r: -(r["off"] + r["nr"]))
+            rows.append({"branch": g["Branch"].iloc[0], "device": dev, "off": off, "nr": nr, "times": times})
+    rows.sort(key=lambda r: branch_sort_key(r["branch"], r["device"]))
 
     now_bad = sorted([s for s in snap if s["status"] in ("Offline", "No reading") and not s["ignore"]],
-                     key=lambda s: s["minutes"] or 0)
+                     key=lambda s: branch_sort_key(s["branch"], s["device"]))
     inactive = sorted([s for s in snap if s["status"] == "Inactive" and not s["ignore"]],
-                      key=lambda s: s["minutes"] or 10**9)
+                      key=lambda s: branch_sort_key(s["branch"], s["device"]))
     tracked = sum(1 for s in snap if s["status"] != "Inactive" and not s["ignore"])
 
     def kpi(label, val, color):
@@ -189,7 +190,7 @@ def build_charts_pdf(path, day, temps, ch_df):
     if temps.empty:
         return
     out_by_dev = (ch_df.groupby("Device")["Out of range (min)"].sum().to_dict() if not ch_df.empty else {})
-    devices = sorted(temps["Device"].unique(), key=lambda d: (-out_by_dev.get(d, 0), str(temps.loc[temps["Device"] == d, "Branch"].iloc[0])))
+    devices = sorted(temps["Device"].unique(), key=lambda d: branch_sort_key(temps.loc[temps["Device"] == d, "Branch"].iloc[0], d))
     start = datetime.combine(day, datetime.min.time())
     end = start + timedelta(days=1)
     colors = ["#1A73E8", "#8E44AD", "#E67E22", "#16A085"]
@@ -286,7 +287,8 @@ def build_summary_excel(path, day_s, ch_df, off_df, al_df, temps, inactive):
             c.fill, c.font, c.alignment, c.border = HEAD, HFONT, CENTER, BORDER
             ws_h.column_dimensions[get_column_letter(ci)].width = 22 if ci == 1 else (14 if ci <= 3 else 8)
         ri = 2
-        for (br, ch, typ), g in t.groupby(["Branch", "Channel", "Type"]):
+        groups = sorted(t.groupby(["Branch", "Channel", "Type", "Device"]), key=lambda kv: branch_sort_key(kv[0][0], kv[0][3], kv[0][1]))
+        for (br, ch, typ, _dev), g in groups:
             for ci, v in enumerate([br, ch, typ], 1):
                 c = ws_h.cell(ri, ci, v)
                 c.alignment, c.border = CENTER, BORDER
