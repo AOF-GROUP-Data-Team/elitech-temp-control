@@ -36,17 +36,14 @@ SENDER_EMAIL  = "aof.group.auto@gmail.com"
 SENDER_NAME   = "Business Intelligence"
 # ---- Instant alerts (temperature only), sent by elitech_live.py ----
 ALERT_TO = [
-    "a.omara@aofgroup.com",
-    "m.alhuaydar@aofgroup.com",
-    "h.modwi@aofgroup.com",
+    
     "cctvdep@aofgroup.com",
 ]
 ALERT_CC = [
-    "m.abouelmaaty@albawasiq.com",   # Maher
+    
     "a.alsalem@aofgroup.com",
     "o.salahaddin@aofgroup.com",
-    "omar@aofgroup.com",
-    "faisal@aofgroup.com",
+   
 ]
 
 # ---- Morning reports for yesterday (temperature summary + offline / no-reading report), sent by elitech_summary.py ----
